@@ -1,0 +1,32 @@
+{
+  "name": "pi-context",
+  "version": "0.1.0",
+  "description": "A /context command for pi that shows what's consuming your context window — tool schemas grouped by extension, system prompt, context files, skills, and conversation.",
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "context",
+    "tokens",
+    "context-window"
+  ],
+  "license": "MIT",
+  "author": "Eric Boehs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericboehs/pi-context.git"
+  },
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typescript": "^5.6.0"
+  }
+}

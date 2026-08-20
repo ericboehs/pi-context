@@ -202,19 +202,23 @@ function padLeft(s: string, width: number): string {
 	return s.length >= width ? s : " ".repeat(width - s.length) + s;
 }
 
-function bar(fraction: number, width = 14): string {
+function bar(fraction: number, width = 12): string {
 	const clamped = Math.max(0, Math.min(1, fraction || 0));
 	const filled = Math.round(clamped * width);
 	return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
-function pct(part: number, whole: number): string {
-	if (!whole) return "  0%";
-	return padLeft(`${((part / whole) * 100).toFixed(0)}%`, 4);
+function humanTokens(n: number): string {
+	return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
-const LABEL_W = 26;
+// Column layout (monospace character cells).
+const LABEL_W = 28;
+const COUNT_W = 3;
 const TOK_W = 8;
+const BAR_W = 12;
+const PCT_W = 5;
+const LINE_W = LABEL_W + COUNT_W + TOK_W + 2 + BAR_W + PCT_W;
 
 export default function (pi: ExtensionAPI) {
 	pi.registerEntryRenderer<ContextReport>(ENTRY_TYPE, (entry, { expanded }, theme) => {
@@ -226,65 +230,83 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const line = (t: string) => box.addChild(new Text(t, 0, 0));
+		const spacer = () => box.addChild(new Text(" ", 0, 0));
 		const denom = r.total || 1;
 
-		// Header
-		const winPct = r.contextWindow ? ` (${((r.total / r.contextWindow) * 100).toFixed(1)}% of window)` : "";
+		// Bars scale to the largest single data row so the biggest one fills.
+		let maxRow = 1;
+		for (const g of r.groups) maxRow = Math.max(maxRow, g.tokens);
+		maxRow = Math.max(maxRow, r.systemBase, r.contextFiles, r.skills, r.conversation);
+
+		// Build each row as plain, width-exact text, then colorize whole segments
+		// so ANSI codes never throw off column alignment.
+		const dataRow = (
+			label: string,
+			tokens: number,
+			opts: { indent?: number; count?: number; color?: string } = {},
+		) => {
+			const lbl = pad(" ".repeat(opts.indent ?? 0) + label, LABEL_W);
+			const cnt = padLeft(opts.count != null ? String(opts.count) : "", COUNT_W);
+			const tok = padLeft(fmt(tokens), TOK_W);
+			const b = bar(tokens / maxRow, BAR_W);
+			const p = padLeft(`${Math.round((tokens / denom) * 100)}%`, PCT_W);
+			const head = `${lbl}${cnt}${tok}`;
+			line(`${opts.color ? theme.fg(opts.color, head) : head} ${theme.fg("dim", b)} ${theme.fg("dim", p)}`);
+		};
+
+		const sectionHeader = (title: string, subtotal: number) => {
+			const left = pad(title, LABEL_W + COUNT_W);
+			line(theme.bold(theme.fg("accent", `${left}${padLeft(fmt(subtotal), TOK_W)}`)));
+		};
+
+		// ---- Header ----
+		const winPct = r.contextWindow ? `${((r.total / r.contextWindow) * 100).toFixed(1)}%` : "?";
 		line(
-			`${theme.bold(theme.fg("accent", "/context"))}  ` +
-				`${theme.bold(fmt(r.total))} tokens${winPct}`,
+			`${theme.bold(theme.fg("accent", "/context"))}  ${theme.bold(fmt(r.total))} tokens  ` +
+				`${theme.fg("dim", `· ${winPct} of ${humanTokens(r.contextWindow)}`)}`,
 		);
 		line(
 			theme.fg(
 				"dim",
-				`${r.model}  ·  window ${fmt(r.contextWindow)}  ·  ` +
-					(r.calibrated ? "calibrated to measured total" : "estimated (no measured total yet)"),
+				`${r.model}  ·  ${r.calibrated ? "calibrated to measured total" : "estimated (pre-response)"}`,
 			),
 		);
-		line("");
+		spacer();
 
-		// Row helper: label | tokens | bar | pct
-		const row = (label: string, tokens: number, color?: string, indent = 0) => {
-			const lbl = pad(" ".repeat(indent) + label, LABEL_W);
-			const tok = padLeft(fmt(tokens), TOK_W);
-			const b = bar(tokens / denom);
-			const p = pct(tokens, denom);
-			const text = `${lbl} ${tok}  ${b} ${p}`;
-			line(color ? theme.fg(color, text) : text);
-		};
-
-		// Section: tool schemas (the usual heavyweight), grouped by extension
-		line(theme.bold(`Tool schemas`) + theme.fg("dim", `  (${fmt(r.toolsTotal)} tokens)`));
+		// ---- Tool schemas ----
+		sectionHeader("TOOL SCHEMAS", r.toolsTotal);
 		for (const g of r.groups) {
-			row(`${g.label} (${g.count})`, g.tokens, "accent", 1);
-			if (expanded) {
-				for (const t of g.tools) row(t.name, t.tokens, "dim", 3);
-			}
+			dataRow(g.label, g.tokens, { indent: 1, count: g.count, color: "accent" });
+			if (expanded) for (const t of g.tools) dataRow(t.name, t.tokens, { indent: 3 });
 		}
-		line("");
+		spacer();
 
-		// Section: system prompt text + resources
-		line(theme.bold("System prompt & resources"));
-		row("base + guidelines + docs", r.systemBase, undefined, 1);
-		row("context files (AGENTS.md)", r.contextFiles, undefined, 1);
-		row("skills listing", r.skills, undefined, 1);
-		line("");
+		// ---- System prompt & resources ----
+		sectionHeader("SYSTEM PROMPT", r.systemBase + r.contextFiles + r.skills);
+		dataRow("base + guidelines + docs", r.systemBase, { indent: 1 });
+		dataRow("context files (AGENTS.md)", r.contextFiles, { indent: 1 });
+		dataRow("skills listing", r.skills, { indent: 1 });
+		spacer();
 
-		// Section: conversation
-		line(theme.bold("Conversation"));
-		row("messages", r.conversation, undefined, 1);
-		line("");
+		// ---- Conversation ----
+		sectionHeader("CONVERSATION", r.conversation);
+		dataRow("messages", r.conversation, { indent: 1 });
+		spacer();
 
-		// Totals
-		row(theme.bold("static overhead"), r.overhead, "warning");
-		row(theme.bold("TOTAL"), r.total, "success");
-		line("");
+		// ---- Total ----
+		line(theme.fg("dim", "─".repeat(LINE_W)));
+		const totLbl = pad("TOTAL", LABEL_W + COUNT_W);
+		line(
+			theme.bold(theme.fg("success", `${totLbl}${padLeft(fmt(r.total), TOK_W)}`)) +
+				theme.fg("dim", `  ${winPct} of window`),
+		);
+		spacer();
 		line(
 			theme.fg(
 				"dim",
 				expanded
-					? "Local estimate; per-tool detail shown. Not sent to the LLM."
-					: "Local estimate. Expand this entry for per-tool detail. Not sent to the LLM.",
+					? "Local estimate · per-tool detail shown · not sent to the LLM"
+					: "Local estimate · expand for per-tool detail · not sent to the LLM",
 			),
 		);
 

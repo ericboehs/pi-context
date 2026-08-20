@@ -15,25 +15,22 @@ The report renders inline in the transcript and is **never sent to the LLM**, so
 ## Example
 
 ```
-/context  31,507 tokens (15.8% of window)
-github-copilot/claude-opus-4.8  ·  window 200,000  ·  calibrated to measured total
+/context  31,507 tokens  · 15.8% of 200.0k
+github-copilot/claude-opus-4.8  ·  calibrated to measured total
 
-Tool schemas  (26,015 tokens)
-  pi-background-tasks (11)   7,480  ████████░░░░░░  24%
-  pi-hermes-memory (6)       5,929  ██████░░░░░░░░  19%
-  pi-web-access (4)          4,198  ████░░░░░░░░░░  13%
+TOOL SCHEMAS                     26,015
+  pi-background-tasks       11   7,480 ████████████  24%
+  pi-hermes-memory           6   5,929 █████████░░░  19%
+  pi-web-access              4   4,198 ██████░░░░░░  13%
   ...
-
-System prompt & resources
-  base + guidelines + docs   2,232  ██░░░░░░░░░░░░   7%
-  context files (AGENTS.md)  1,107  █░░░░░░░░░░░░░   4%
-  skills listing               853  █░░░░░░░░░░░░░   3%
-
-Conversation
-  messages                   1,200  █░░░░░░░░░░░░░   4%
-
-  static overhead           30,307
-  TOTAL                     31,507
+SYSTEM PROMPT                     4,192
+  base + guidelines + docs         2,232 ███░░░░░░░░░   7%
+  context files (AGENTS.md)        1,107 █░░░░░░░░░░░   4%
+  skills listing                     853 █░░░░░░░░░░░   3%
+CONVERSATION                      1,300
+  messages                         1,300 █░░░░░░░░░░░   4%
+──────────────────────────────────────────────────────────
+TOTAL                            31,507  15.8% of window
 ```
 
 Expand the entry (in the transcript) to see a **per-tool** breakdown inside each group.

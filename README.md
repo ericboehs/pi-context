@@ -57,12 +57,18 @@ pi -e /path/to/pi-context/index.ts
 
 ## How token counts are computed
 
-pi-context uses a fast, dependency-free **local estimator** (characters ÷ a per-token divisor: prose ≈ 2.8, JSON schemas ≈ 2.4, tuned against measured totals on claude-opus). When pi has a measured context total available (`ctx.getContextUsage()`), every section is **calibrated** so the per-section numbers reconcile exactly to that measured total. Before the first model response in a session, it falls back to a pure estimate (labeled as such).
+pi-context reports three levels of accuracy, shown in the report header:
 
-Tune the divisors for your provider/tokenizer if you like (lower = more tokens per character):
+1. **`calibrated to measured total`** — pi has a live measured context total (`ctx.getContextUsage()`), so every section is scaled to reconcile *exactly* to it. This is the normal case once the model has responded at least once.
+2. **`estimated (saved calibration for this model)`** — before the first response, pi-context reuses the scale it learned from a previous measured session with the *same* model. Because Claude and GPT tokenizers differ substantially, this per-model learning keeps the pre-response estimate close (typically within a few percent).
+3. **`estimated (pre-response)`** — a model you've never measured before. Falls back to a neutral character÷token estimate (prose ≈ 3.6, JSON ≈ 3.0) until the first response teaches it that model's scale.
+
+Learned scales are cached in `~/.pi-context/calibration.json` (keyed by `provider/model`, exponentially smoothed). Delete that file to reset.
+
+Tune the base divisors for an unseen provider/tokenizer if you like (lower = more tokens per character):
 
 ```bash
-PI_CONTEXT_CPT_PROSE=2.8 PI_CONTEXT_CPT_JSON=2.4 pi
+PI_CONTEXT_CPT_PROSE=3.6 PI_CONTEXT_CPT_JSON=3.0 pi
 ```
 
 Only **active** tools are counted (the ones actually sent to the model), so disabling tools with `--exclude-tools` / `--tools` is reflected immediately.

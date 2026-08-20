@@ -2,6 +2,8 @@
 
 A `/context` command for [pi](https://github.com/earendil-works/pi-coding-agent) — like Claude Code's `/context`, but for pi.
 
+![pi-context /context report](docs/screenshot.png)
+
 pi's footer shows *one* aggregate token number. `pi-context` breaks that number down so you can see **what is actually consuming your context window**:
 
 - **Tool schemas**, grouped by the extension/package that registered them (usually the #1 consumer)

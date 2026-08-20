@@ -18,15 +18,38 @@
 
 import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
-// Characters-per-token divisors. Calibrated against measured context totals on
-// claude-opus (github-copilot): a raw pre-response estimate of 6,907 mapped to a
-// measured 9,901 (~1.43x), so the defaults below are tuned to land close to the
-// real total *before* any response. Once pi has a measured total, every section
-// is scaled to reconcile exactly, so these only affect the first /context of a
-// session. Both are overridable via env for other providers/tokenizers.
-const CPT_PROSE = Number(process.env.PI_CONTEXT_CPT_PROSE) || 2.8;
-const CPT_JSON = Number(process.env.PI_CONTEXT_CPT_JSON) || 2.4;
+// Base characters-per-token divisors used only for a model we've never measured.
+// A single divisor can't fit every tokenizer (Claude counts denser than GPT),
+// so these are a neutral middle ground. Once pi reports a measured total for a
+// model, pi-context learns that model's calibration scale and reuses it on
+// future pre-response reports (see calibration cache below). Both overridable.
+const CPT_PROSE = Number(process.env.PI_CONTEXT_CPT_PROSE) || 3.6;
+const CPT_JSON = Number(process.env.PI_CONTEXT_CPT_JSON) || 3.0;
+
+// Persisted per-model calibration: { "provider/model": scale }. Lets a
+// pre-response /context reuse the scale learned from a prior measured session.
+const CALIB_PATH = join(homedir(), ".pi-context", "calibration.json");
+
+function loadCalibration(): Record<string, number> {
+	try {
+		return JSON.parse(readFileSync(CALIB_PATH, "utf8")) as Record<string, number>;
+	} catch {
+		return {};
+	}
+}
+
+function saveCalibration(data: Record<string, number>): void {
+	try {
+		mkdirSync(dirname(CALIB_PATH), { recursive: true });
+		writeFileSync(CALIB_PATH, JSON.stringify(data, null, 2));
+	} catch {
+		/* read-only fs: calibration just won't persist */
+	}
+}
 
 const ENTRY_TYPE = "context-report";
 
@@ -47,7 +70,9 @@ interface ContextReport {
 	model: string;
 	contextWindow: number;
 	realTokens: number | null;
-	calibrated: boolean;
+	// "measured" = reconciled to pi's live total; "learned" = scaled by a saved
+	// per-model calibration; "raw" = neutral estimate for an unseen model.
+	source: "measured" | "learned" | "raw";
 	// Section totals (already calibrated when calibrated === true).
 	toolsTotal: number;
 	systemBase: number;
@@ -149,12 +174,25 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 
 	const rawTotal =
 		systemBaseRaw + contextFilesRaw + skillsRaw + toolsTotalRaw + conversationRaw;
+	const modelKey = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown";
+	const calib = loadCalibration();
+
 	let scale = 1;
-	let calibrated = false;
+	let source: "measured" | "learned" | "raw" = "raw";
 	if (realTokens && rawTotal > 0) {
+		// Live measured total: reconcile exactly and remember this model's scale
+		// (exponential smoothing so one odd turn doesn't dominate).
 		scale = realTokens / rawTotal;
-		calibrated = true;
+		source = "measured";
+		const prior = calib[modelKey];
+		calib[modelKey] = prior ? prior * 0.6 + scale * 0.4 : scale;
+		saveCalibration(calib);
+	} else if (calib[modelKey] && rawTotal > 0) {
+		// No live total yet, but we've measured this model before.
+		scale = calib[modelKey];
+		source = "learned";
 	}
+	const calibrated = source === "measured";
 
 	const s = (n: number) => Math.round(n * scale);
 
@@ -175,10 +213,10 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 	const total = calibrated ? (realTokens as number) : overhead + conversation;
 
 	return {
-		model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown",
+		model: modelKey,
 		contextWindow,
 		realTokens,
-		calibrated,
+		source,
 		toolsTotal,
 		systemBase,
 		contextFiles,
@@ -268,12 +306,13 @@ export default function (pi: ExtensionAPI) {
 			`${theme.bold(theme.fg("accent", "/context"))}  ${theme.bold(fmt(r.total))} tokens  ` +
 				`${theme.fg("dim", `· ${winPct} of ${humanTokens(r.contextWindow)}`)}`,
 		);
-		line(
-			theme.fg(
-				"dim",
-				`${r.model}  ·  ${r.calibrated ? "calibrated to measured total" : "estimated (pre-response)"}`,
-			),
-		);
+		const sourceNote =
+			r.source === "measured"
+				? "calibrated to measured total"
+				: r.source === "learned"
+					? "estimated (saved calibration for this model)"
+					: "estimated (pre-response)";
+		line(theme.fg("dim", `${r.model}  ·  ${sourceNote}`));
 		spacer();
 
 		// ---- Tool schemas ----

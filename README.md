@@ -35,7 +35,7 @@ CONVERSATION                      1,300
 TOTAL                            31,507  15.8% of window
 ```
 
-Expand the entry (in the transcript) to see a **per-tool** breakdown inside each group.
+Press **`Ctrl+O`** (pi's tool-output expand toggle) to expand the report and see a **per-tool** breakdown inside each group. `Ctrl+O` again collapses it.
 
 ## Install
 

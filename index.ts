@@ -305,8 +305,8 @@ export default function (pi: ExtensionAPI) {
 			theme.fg(
 				"dim",
 				expanded
-					? "Local estimate · per-tool detail shown · not sent to the LLM"
-					: "Local estimate · expand for per-tool detail · not sent to the LLM",
+					? "Local estimate · per-tool detail shown (Ctrl+O to collapse) · not sent to the LLM"
+					: "Local estimate · press Ctrl+O for per-tool detail · not sent to the LLM",
 			),
 		);
 

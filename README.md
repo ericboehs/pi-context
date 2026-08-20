@@ -38,16 +38,20 @@ Expand the entry (in the transcript) to see a **per-tool** breakdown inside each
 ## Install
 
 ```bash
-pi install github.com/ericboehs/pi-context
+pi install git:github.com/ericboehs/pi-context
 ```
 
-Or load it locally for a quick try:
+Then run `/context` in any session. Update later with:
+
+```bash
+pi update git:github.com/ericboehs/pi-context
+```
+
+Or load it locally for a quick try without installing:
 
 ```bash
 pi -e /path/to/pi-context/index.ts
 ```
-
-Then run `/context` in any session.
 
 ## How token counts are computed
 

@@ -57,12 +57,12 @@ pi -e /path/to/pi-context/index.ts
 
 ## How token counts are computed
 
-pi-context uses a fast, dependency-free **local estimator** (characters ÷ a per-token divisor: prose ≈ 4.0, JSON schemas ≈ 3.4). When pi has a measured context total available (`ctx.getContextUsage()`), every section is **calibrated** so the per-section numbers reconcile exactly to that measured total. Before the first model response in a session, it falls back to a pure estimate (labeled as such).
+pi-context uses a fast, dependency-free **local estimator** (characters ÷ a per-token divisor: prose ≈ 2.8, JSON schemas ≈ 2.4, tuned against measured totals on claude-opus). When pi has a measured context total available (`ctx.getContextUsage()`), every section is **calibrated** so the per-section numbers reconcile exactly to that measured total. Before the first model response in a session, it falls back to a pure estimate (labeled as such).
 
-Tune the divisors if you like:
+Tune the divisors for your provider/tokenizer if you like (lower = more tokens per character):
 
 ```bash
-PI_CONTEXT_CPT_PROSE=4.0 PI_CONTEXT_CPT_JSON=3.4 pi
+PI_CONTEXT_CPT_PROSE=2.8 PI_CONTEXT_CPT_JSON=2.4 pi
 ```
 
 Only **active** tools are counted (the ones actually sent to the model), so disabling tools with `--exclude-tools` / `--tools` is reflected immediately.

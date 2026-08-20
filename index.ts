@@ -19,11 +19,14 @@
 import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 
-// Characters-per-token divisors. Prose (natural language) tokenizes at roughly
-// ~4 chars/token; JSON tool schemas are denser (punctuation + identifiers).
-// Both are overridable via env for power users who want to hand-tune.
-const CPT_PROSE = Number(process.env.PI_CONTEXT_CPT_PROSE) || 4.0;
-const CPT_JSON = Number(process.env.PI_CONTEXT_CPT_JSON) || 3.4;
+// Characters-per-token divisors. Calibrated against measured context totals on
+// claude-opus (github-copilot): a raw pre-response estimate of 6,907 mapped to a
+// measured 9,901 (~1.43x), so the defaults below are tuned to land close to the
+// real total *before* any response. Once pi has a measured total, every section
+// is scaled to reconcile exactly, so these only affect the first /context of a
+// session. Both are overridable via env for other providers/tokenizers.
+const CPT_PROSE = Number(process.env.PI_CONTEXT_CPT_PROSE) || 2.8;
+const CPT_JSON = Number(process.env.PI_CONTEXT_CPT_JSON) || 2.4;
 
 const ENTRY_TYPE = "context-report";
 

@@ -4,9 +4,12 @@
  * Shows what is consuming your context window, broken down by:
  *   - Tool schemas (grouped by the extension/package that registered them)
  *   - System prompt text (base prompt + guidelines + tool one-liners + pi docs)
- *   - Context files (AGENTS.md / CLAUDE.md)
- *   - Skills listing
+ *   - Context files (AGENTS.md / CLAUDE.md), per file when expanded
+ *   - Skills listing, per skill when expanded
  *   - Conversation (messages)
+ *
+ * Expanding (Ctrl+O) also lists extensions that are loaded but cost no context
+ * (they register commands/hooks but no tool schemas).
  *
  * The report renders in the transcript via a custom entry, so it is durable and
  * is NEVER sent to the LLM (it does not add to your context).
@@ -20,7 +23,7 @@ import type { ExtensionAPI, ToolInfo } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 // Base characters-per-token divisors used only for a model we've never measured.
 // A single divisor can't fit every tokenizer (Claude counts denser than GPT),
@@ -63,7 +66,19 @@ interface GroupStat {
 	source: string;
 	tokens: number;
 	count: number;
+	commands: number;
 	tools: ToolStat[];
+}
+
+interface SkillStat {
+	name: string;
+	origin: string;
+	tokens: number;
+}
+
+interface FileStat {
+	path: string;
+	tokens: number;
 }
 
 interface ContextReport {
@@ -82,6 +97,12 @@ interface ContextReport {
 	overhead: number; // system + tools (everything that isn't conversation)
 	total: number; // grand total shown in the header
 	groups: GroupStat[];
+	/** Loaded extensions that register no tool schemas (zero context cost). */
+	freeExtensions: Array<{ label: string; commands: number }>;
+	skillList: SkillStat[];
+	/** Skills-block tokens not attributable to an individual skill (wrapper tags). */
+	skillsOverhead: number;
+	contextFileList: FileStat[];
 	generatedAt: number;
 }
 
@@ -90,14 +111,48 @@ function estTokens(text: string, cpt: number): number {
 	return Math.ceil(text.length / cpt);
 }
 
-function friendlyLabel(source: string | undefined): string {
+/**
+ * Human name for whatever registered a tool/command.
+ *
+ * Packages carry their name in `source` (npm:… / git:…). Loose extension files
+ * only say "auto" or "local", which would collapse every hand-written extension
+ * into one meaningless group — so those fall back to the file name.
+ */
+function friendlyLabel(info: { source?: string; path?: string } | undefined): string {
+	const source = info?.source;
 	if (!source || source === "builtin") return "pi core (built-in)";
 	if (source === "sdk") return "sdk (host app)";
 	let m = source.match(/^npm:(@?[^@]+?)(?:@[^@]*)?$/);
 	if (m) return m[1];
 	m = source.match(/^git:.*?\/([^/@]+?)(?:@[^@]*)?$/);
 	if (m) return m[1];
+	const path = info?.path;
+	if (path && !path.startsWith("<")) return basename(path).replace(/\.[cm]?[jt]sx?$/, "");
+	if (path) return path.replace(/^<|>$/g, "");
 	return source;
+}
+
+function shortPath(p: string): string {
+	const home = homedir();
+	return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
+}
+
+/**
+ * Where a skill came from. Package skills use the package name; loose skills use
+ * the directory that owns the `skills/` folder (a plugin name, usually), since
+ * every skill file is just called SKILL.md.
+ */
+function skillOrigin(info: { source?: string; path?: string } | undefined): string {
+	const source = info?.source ?? "";
+	let m = source.match(/^npm:(@?[^@]+?)(?:@[^@]*)?$/);
+	if (m) return m[1];
+	m = source.match(/^git:.*?\/([^/@]+?)(?:@[^@]*)?$/);
+	if (m) return m[1];
+	const path = info?.path ?? "";
+	const parts = path.split("/");
+	const idx = parts.lastIndexOf("skills");
+	if (idx > 0) return parts[idx - 1].replace(/^\./, "");
+	return "";
 }
 
 function extractAll(text: string, re: RegExp): string {
@@ -126,10 +181,10 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 		const tok = estTokens(schema, CPT_JSON);
 		toolsTotalRaw += tok;
 		const source = t.sourceInfo?.source ?? "unknown";
-		const label = friendlyLabel(source);
+		const label = friendlyLabel(t.sourceInfo);
 		let g = groupMap.get(label);
 		if (!g) {
-			g = { label, source, tokens: 0, count: 0, tools: [] };
+			g = { label, source, tokens: 0, count: 0, commands: 0, tools: [] };
 			groupMap.set(label, g);
 		}
 		g.tokens += tok;
@@ -137,14 +192,64 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 		g.tools.push({ name: t.name, tokens: tok });
 	}
 
+	// --- Extensions that registered commands (some register no tools at all) ---
+	const skillSourceByName = new Map<string, string>();
+	for (const c of (pi.getCommands?.() ?? []) as Array<{
+		name: string;
+		source?: string;
+		sourceInfo?: { source?: string; path?: string };
+	}>) {
+		if (c.source === "skill") {
+			skillSourceByName.set(c.name.replace(/^skill:/, ""), skillOrigin(c.sourceInfo));
+			continue;
+		}
+		if (c.source && c.source !== "extension") continue; // prompt templates aren't extensions
+		const label = friendlyLabel(c.sourceInfo);
+		let g = groupMap.get(label);
+		if (!g) {
+			g = {
+				label,
+				source: c.sourceInfo?.source ?? "unknown",
+				tokens: 0,
+				count: 0,
+				commands: 0,
+				tools: [],
+			};
+			groupMap.set(label, g);
+		}
+		g.commands += 1;
+	}
+
 	// --- System prompt text sections ---
-	const contextFilesText = (opts.contextFiles ?? [])
-		.map((f: { content: string }) => f.content ?? "")
-		.join("\n");
+	const contextFileEntries: Array<{ path: string; content: string }> = opts.contextFiles ?? [];
+	const contextFilesText = contextFileEntries.map((f) => f.content ?? "").join("\n");
 	const contextFilesRaw = estTokens(contextFilesText, CPT_PROSE);
+	const contextFileListRaw: FileStat[] = contextFileEntries.map((f) => ({
+		path: shortPath(f.path ?? "(unknown)"),
+		tokens: estTokens(f.content ?? "", CPT_PROSE),
+	}));
 
 	const skillsBlock = extractAll(systemPrompt, /<available_skills>[\s\S]*?<\/available_skills>/g);
 	const skillsRaw = estTokens(skillsBlock, CPT_PROSE);
+
+	// Per-skill breakdown: each <skill> element as it appears in the prompt.
+	const skillListRaw: SkillStat[] = [];
+	let skillItemsRaw = 0;
+	for (const m of skillsBlock.matchAll(/[ \t]*<skill>[\s\S]*?<\/skill>\n?/g)) {
+		const text = m[0];
+		const name = /<name>([\s\S]*?)<\/name>/.exec(text)?.[1]?.trim() ?? "(unnamed)";
+		const tok = estTokens(text, CPT_PROSE);
+		skillItemsRaw += tok;
+		skillListRaw.push({
+			name,
+			origin: (() => {
+				const o = skillSourceByName.get(name) ?? "";
+				return o === name ? "" : o; // don't repeat the name back at the reader
+			})(),
+			tokens: tok,
+		});
+	}
+	const skillsOverheadRaw = Math.max(0, skillsRaw - skillItemsRaw);
 
 	const systemTotalRaw = estTokens(systemPrompt, CPT_PROSE);
 	// Base = everything in the system prompt string that isn't a context file or
@@ -196,12 +301,24 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 
 	const s = (n: number) => Math.round(n * scale);
 
-	const groups: GroupStat[] = [...groupMap.values()]
+	const allGroups: GroupStat[] = [...groupMap.values()]
 		.map((g) => ({
 			...g,
 			tokens: s(g.tokens),
 			tools: g.tools.map((t) => ({ name: t.name, tokens: s(t.tokens) })).sort((a, b) => b.tokens - a.tokens),
 		}))
+		.sort((a, b) => b.tokens - a.tokens);
+	const groups = allGroups.filter((g) => g.count > 0);
+	const freeExtensions = allGroups
+		.filter((g) => g.count === 0)
+		.map((g) => ({ label: g.label, commands: g.commands }))
+		.sort((a, b) => a.label.localeCompare(b.label));
+
+	const skillList = skillListRaw
+		.map((sk) => ({ ...sk, tokens: s(sk.tokens) }))
+		.sort((a, b) => b.tokens - a.tokens);
+	const contextFileList = contextFileListRaw
+		.map((f) => ({ ...f, tokens: s(f.tokens) }))
 		.sort((a, b) => b.tokens - a.tokens);
 
 	const toolsTotal = s(toolsTotalRaw);
@@ -225,6 +342,10 @@ function buildReport(pi: ExtensionAPI, ctx: any): ContextReport {
 		overhead,
 		total,
 		groups,
+		freeExtensions,
+		skillList,
+		skillsOverhead: s(skillsOverheadRaw),
+		contextFileList,
 		generatedAt: Date.now(),
 	};
 }
@@ -237,6 +358,18 @@ function fmt(n: number): string {
 
 function pad(s: string, width: number): string {
 	return s.length >= width ? s : s + " ".repeat(width - s.length);
+}
+
+/** Pad or ellipsize so a label always occupies exactly `width` cells. */
+function fit(s: string, width: number): string {
+	if (s.length <= width) return pad(s, width);
+	return width <= 1 ? s.slice(0, width) : `${s.slice(0, width - 1)}\u2026`;
+}
+
+/** Ellipsize a path from the front so the file name stays visible. */
+function fitPath(p: string, width: number): string {
+	if (p.length <= width) return p;
+	return `\u2026${p.slice(p.length - (width - 1))}`;
 }
 
 function padLeft(s: string, width: number): string {
@@ -284,9 +417,9 @@ export default function (pi: ExtensionAPI) {
 		const dataRow = (
 			label: string,
 			tokens: number,
-			opts: { indent?: number; count?: number; color?: string } = {},
+			opts: { indent?: number; count?: number; color?: Parameters<typeof theme.fg>[0] } = {},
 		) => {
-			const lbl = pad(" ".repeat(opts.indent ?? 0) + label, LABEL_W);
+			const lbl = fit(" ".repeat(opts.indent ?? 0) + label, LABEL_W);
 			const cnt = padLeft(opts.count != null ? String(opts.count) : "", COUNT_W);
 			const tok = padLeft(fmt(tokens), TOK_W);
 			const b = bar(tokens / maxRow, BAR_W);
@@ -298,6 +431,23 @@ export default function (pi: ExtensionAPI) {
 		const sectionHeader = (title: string, subtotal: number) => {
 			const left = pad(title, LABEL_W + COUNT_W);
 			line(theme.bold(theme.fg("accent", `${left}${padLeft(fmt(subtotal), TOK_W)}`)));
+		};
+
+		// Dim, comma-joined list wrapped to the report width (used for zero-cost rows).
+		const wrappedList = (items: string[], indent: number) => {
+			const prefix = " ".repeat(indent);
+			const width = Math.max(20, LINE_W - indent);
+			let cur = "";
+			for (const item of items) {
+				const next = cur ? `${cur}, ${item}` : item;
+				if (next.length > width && cur) {
+					line(theme.fg("dim", `${prefix + cur},`));
+					cur = item;
+				} else {
+					cur = next;
+				}
+			}
+			if (cur) line(theme.fg("dim", prefix + cur));
 		};
 
 		// ---- Header ----
@@ -321,13 +471,39 @@ export default function (pi: ExtensionAPI) {
 			dataRow(g.label, g.tokens, { indent: 1, count: g.count, color: "accent" });
 			if (expanded) for (const t of g.tools) dataRow(t.name, t.tokens, { indent: 3 });
 		}
+		if (expanded && r.freeExtensions?.length) {
+			line(theme.fg("dim", " other extensions loaded (no tool schemas, 0 tokens):"));
+			wrappedList(
+				r.freeExtensions.map((e) => (e.commands ? `${e.label} (${e.commands})` : e.label)),
+				3,
+			);
+		}
 		spacer();
 
 		// ---- System prompt & resources ----
 		sectionHeader("SYSTEM PROMPT", r.systemBase + r.contextFiles + r.skills);
 		dataRow("base + guidelines + docs", r.systemBase, { indent: 1 });
-		dataRow("context files (AGENTS.md)", r.contextFiles, { indent: 1 });
-		dataRow("skills listing", r.skills, { indent: 1 });
+		dataRow("context files", r.contextFiles, {
+			indent: 1,
+			count: r.contextFileList?.length,
+			color: expanded && r.contextFileList?.length ? "accent" : undefined,
+		});
+		if (expanded)
+			for (const f of r.contextFileList ?? [])
+				dataRow(fitPath(f.path, LABEL_W - 3), f.tokens, { indent: 3 });
+		dataRow("skills listing", r.skills, {
+			indent: 1,
+			count: r.skillList?.length,
+			color: expanded && r.skillList?.length ? "accent" : undefined,
+		});
+		if (expanded) {
+			for (const sk of r.skillList ?? []) {
+				const withOrigin = sk.origin ? `${sk.name} · ${sk.origin}` : sk.name;
+				// Truncating the origin off is noise; drop it entirely when it won't fit.
+				dataRow(withOrigin.length > LABEL_W - 3 ? sk.name : withOrigin, sk.tokens, { indent: 3 });
+			}
+			if (r.skillsOverhead) dataRow("(listing wrapper)", r.skillsOverhead, { indent: 3 });
+		}
 		spacer();
 
 		// ---- Conversation ----
@@ -347,8 +523,8 @@ export default function (pi: ExtensionAPI) {
 			theme.fg(
 				"dim",
 				expanded
-					? "Local estimate · per-tool detail shown (Ctrl+O to collapse) · not sent to the LLM"
-					: "Local estimate · press Ctrl+O for per-tool detail · not sent to the LLM",
+					? "Local estimate · per-item detail shown (Ctrl+O to collapse) · not sent to the LLM"
+					: "Local estimate · press Ctrl+O for per-tool/skill detail · not sent to the LLM",
 			),
 		);
 

@@ -8,8 +8,8 @@ pi's footer shows *one* aggregate token number. `pi-context` breaks that number 
 
 - **Tool schemas**, grouped by the extension/package that registered them (usually the #1 consumer)
 - **System prompt** text (base prompt + guidelines + tool one-liners + pi docs)
-- **Context files** (`AGENTS.md` / `CLAUDE.md`)
-- **Skills** listing
+- **Context files** (`AGENTS.md` / `CLAUDE.md`), per file when expanded
+- **Skills** listing, per skill when expanded
 - **Conversation** (messages)
 
 The report renders inline in the transcript and is **never sent to the LLM**, so running it costs you nothing.
@@ -27,15 +27,30 @@ TOOL SCHEMAS                     26,015
   ...
 SYSTEM PROMPT                     4,192
   base + guidelines + docs         2,232 ███░░░░░░░░░   7%
-  context files (AGENTS.md)        1,107 █░░░░░░░░░░░   4%
-  skills listing                     853 █░░░░░░░░░░░   3%
+  context files              1     1,107 █░░░░░░░░░░░   4%
+  skills listing            23       853 █░░░░░░░░░░░   3%
 CONVERSATION                      1,300
   messages                         1,300 █░░░░░░░░░░░   4%
 ──────────────────────────────────────────────────────────
 TOTAL                            31,507  15.8% of window
 ```
 
-Press **`Ctrl+O`** (pi's tool-output expand toggle) to expand the report and see a **per-tool** breakdown inside each group. `Ctrl+O` again collapses it.
+Press **`Ctrl+O`** (pi's tool-output expand toggle) to expand the report; `Ctrl+O` again collapses it. Expanded adds:
+
+- a **per-tool** breakdown inside each extension group
+- a **per-skill** breakdown of the skills listing (with the plugin/package each skill came from)
+- a **per-file** breakdown of context files
+- the **extensions that are loaded but cost zero context** — the ones registering only commands, hooks, or renderers and no tool schemas (with their command counts)
+
+```
+ skills listing              23   2,937 ████████████   47%
+   review-pr · pr-review            159 █░░░░░░░░░░░    3%
+   agent-desktop                    154 █░░░░░░░░░░░    2%
+   terminal-browser · agents        142 █░░░░░░░░░░░    2%
+   ...
+ other extensions loaded (no tool schemas, 0 tokens):
+   color (1), footer (3), sc (1), session-scheduler (2)
+```
 
 ## Install
 
@@ -72,6 +87,8 @@ PI_CONTEXT_CPT_PROSE=3.6 PI_CONTEXT_CPT_JSON=3.0 pi
 ```
 
 Only **active** tools are counted (the ones actually sent to the model), so disabling tools with `--exclude-tools` / `--tools` is reflected immediately.
+
+Extension groups are named after the package that registered them (`npm:`/`git:` sources). Loose extension files — the ones pi discovers in `~/.pi/agent/extensions/` — are named after their file, so each one gets its own row instead of all collapsing into a single `auto` group.
 
 ## Why this is useful
 

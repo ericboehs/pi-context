@@ -94,6 +94,16 @@ Extension groups are named after the package that registered them (`npm:`/`git:`
 
 Extensions are convenient, but each one ships tool schemas that live in *every* request. It's easy to accumulate 20–30 tools and quietly spend 25k+ tokens of context before you type anything. `/context` shows you exactly which extensions cost the most, so you can decide what to keep, trim (`--exclude-tools`), or uninstall.
 
+## Development
+
+The package declares no dependencies, so that `pi install` does not clone a copy
+of pi into `~/.pi/agent/git` behind it. Fetch the types on demand to typecheck:
+
+```bash
+npm install --no-save typescript@5 @earendil-works/pi-coding-agent @earendil-works/pi-tui
+npm run typecheck
+```
+
 ## License
 
 MIT

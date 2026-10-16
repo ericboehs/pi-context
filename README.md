@@ -1,5 +1,12 @@
 # pi-context
 
+> [!IMPORTANT]
+> **Moved to [Boehsline](https://github.com/ericboehs/pi-boehsline)** (`packages/context`), with its full history. This repository is archived and gets no more changes. Install Boehsline instead:
+>
+> ```bash
+> pi install git:github.com/ericboehs/pi-boehsline
+> ```
+
 A `/context` command for [pi](https://github.com/earendil-works/pi-coding-agent) — like Claude Code's `/context`, but for pi.
 
 ![pi-context /context report](docs/screenshot.png)
